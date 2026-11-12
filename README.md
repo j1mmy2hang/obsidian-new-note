@@ -13,38 +13,47 @@ Works on desktop and on mobile.
 
 ## What it does
 
-- **Every new note**: Cmd+N, the "New note" button, the folder menu, or
-  clicking a link to a note that doesn't exist yet. It gets:
+The content comes from two ordinary template notes. Edit them like any other
+note, and every new note after that follows. Set their paths in the plugin's
+settings (defaults: `asset/template/New Note Template.md` and
+`asset/template/New Todo Template.md`).
+
+- **Note template**: used for every new note. That means Cmd+N, the "New note"
+  button, the folder menu, mobile quick capture, and clicking a link to a note
+  that doesn't exist yet. For example:
 
   ```yaml
   ---
-  created: 2026-11-12
+  created: {{date}}
   tags:
   descriptive:
-  uid: pUCq
+  uid: {{uid}}
   ---
   ```
 
-- **New todo** command (bind it to a hotkey, e.g. Cmd+J). It opens exactly like
-  Cmd+N, with this frontmatter instead:
+- **Todo template**: used by the **New todo** command (bind it to a hotkey,
+  e.g. Cmd+J). It opens exactly like Cmd+N.
 
-  ```yaml
-  ---
-  do date:
-  due date:
-  descriptive:
-    - todo
-  uid: QIW9
-  ---
-  ```
+Placeholders, in core Templates syntax: `{{date}}` (`YYYY-MM-DD`),
+`{{date:FORMAT}}`, `{{time}}` (`HH:mm`), `{{time:FORMAT}}`, `{{title}}`, and
+`{{uid}}`: 4 characters from `0-9A-Za-z`, never one another note already has.
+`{{content}}` becomes nothing, so the same file can also serve as an iOS
+Quick Capture template, where it becomes the captured text.
+
+## iOS Quick Capture
+
+Quick Capture saves notes from outside the app, so no plugin runs at capture
+time. Point a Quick Capture Location at the note template: Quick Capture fills
+`{{date}}`, `{{time}}` and `{{content}}` itself and leaves `uid: {{uid}}` as it
+is. On desktop, New Note watches for notes with an unfilled `{{uid}}` in their
+frontmatter (at startup, and whenever a note changes or syncs in) and replaces
+it with a real uid. Notes in the Templates folder are skipped.
 
 - An unnamed note is titled `YYYYMMDDHHmm`. A second note made in the same
   minute gets `YYYYMMDDHHmmss`.
-- A `uid` is 4 characters from `0-9A-Za-z`, never one another note already has.
 - Notes created with their own content (Excalidraw, daily notes) and notes made
   inside the core Templates folder are left as they are.
-
-The fields are defined at the top of `main.js`.
+- If a template file is missing, a built-in one is used and a notice says so.
 
 ## Install
 

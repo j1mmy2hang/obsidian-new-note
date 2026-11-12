@@ -1,9 +1,9 @@
 {
   "id": "new-note",
   "name": "New Note",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "minAppVersion": "1.4.0",
-  "description": "Every new note is born complete: a timestamp title, ready to type over, and its frontmatter with a uid, in one write. Cmd+N makes a note, a second command makes a todo.",
+  "description": "Every new note is born complete in one write: a timestamp title and content from your own template notes, with a uid. Cmd+N makes a note, a command makes a todo.",
   "author": "Jimmy Zhang",
   "isDesktopOnly": false
 }
