@@ -1,6 +1,6 @@
 'use strict';
 
-const { Plugin, PluginSettingTab, Setting, Notice, Platform, TFile, moment, normalizePath } = require('obsidian');
+const { Plugin, PluginSettingTab, Setting, Notice, TFile, moment, normalizePath } = require('obsidian');
 
 /**
  * New Note: one plugin that makes a new note, start to finish.
@@ -35,10 +35,11 @@ const { Plugin, PluginSettingTab, Setting, Notice, Platform, TFile, moment, norm
  *     is different.
  *
  * iOS Quick Capture writes notes from outside the app, so none of the above
- * runs for it. It fills its own placeholders and leaves `uid: {{uid}}` as
- * typed. On desktop, the plugin watches for notes with that unfilled
- * placeholder (at startup, and whenever a note changes or syncs in) and
- * replaces it with a real uid.
+ * runs for it. It fills its own placeholders, leaves `uid: {{uid}}` as typed,
+ * and names the note "Untitled", "Untitled 1", ... So on every device, at
+ * startup and whenever a note is created, changes or syncs in, the plugin
+ * tidies such a note: it fills the uid and renames it to the timestamp of its
+ * creation time.
  */
 
 const DEFAULT_SETTINGS = {
@@ -96,14 +97,19 @@ module.exports = class NewNotePlugin extends Plugin {
     // uids handed out this session, so two notes filled back to back can't
     // get the same one before the metadata cache has caught up.
     this.issuedUids = new Set();
-    this.filling = new Set();
+    // Notes being tidied, and notes that changed meanwhile and need one more
+    // pass (e.g. the metadata cache reading a new note's frontmatter while it
+    // was being renamed). Keyed by TFile, which keeps its identity on rename.
+    this.tidying = new Set();
+    this.tidyAgain = new Set();
 
-    if (Platform.isDesktopApp) {
-      this.app.workspace.onLayoutReady(() => {
-        this.registerEvent(this.app.metadataCache.on('changed', (file) => this.fillUidPlaceholder(file)));
-        for (const file of this.app.vault.getMarkdownFiles()) this.fillUidPlaceholder(file);
-      });
-    }
+    // Registered after layout-ready: during startup the vault fires `create`
+    // for every existing file, and the scan below covers those instead.
+    this.app.workspace.onLayoutReady(() => {
+      this.registerEvent(this.app.metadataCache.on('changed', (file) => this.tidyCapturedNote(file)));
+      this.registerEvent(this.app.vault.on('create', (file) => this.tidyCapturedNote(file)));
+      for (const file of this.app.vault.getMarkdownFiles()) this.tidyCapturedNote(file);
+    });
 
     this.addCommand({
       id: 'new-todo',
@@ -181,6 +187,44 @@ module.exports = class NewNotePlugin extends Plugin {
   }
 
   /**
+   * Finish a note that Quick Capture (or anything else outside the app) left
+   * half-done. One note at a time, so the fill and the rename can't overlap.
+   */
+  async tidyCapturedNote(file) {
+    if (!(file instanceof TFile) || file.extension !== 'md') return;
+    if (this.inTemplateFolder(file.parent)) return;
+    if (this.tidying.has(file)) {
+      this.tidyAgain.add(file);
+      return;
+    }
+    this.tidying.add(file);
+    try {
+      await this.fillUidPlaceholder(file);
+      await this.renameUntitled(file);
+    } catch (err) {
+      console.error('New Note: could not tidy', file.path, err);
+    } finally {
+      this.tidying.delete(file);
+      if (this.tidyAgain.delete(file) && file.parent) this.tidyCapturedNote(file);
+    }
+  }
+
+  /**
+   * "Untitled", "Untitled 1", "Untitled (1)" → the creation-time timestamp,
+   * with the same same-minute fallback as a new note. The timestamp comes from
+   * the file's ctime, so on whichever device does it, the name says when the
+   * note was captured, not when it was tidied. renameFile updates links.
+   */
+  async renameUntitled(file) {
+    if (!/^untitled(?: ?\(?\d+\)?)?$/i.test(file.basename)) return;
+    const when = moment(file.stat.ctime || Date.now());
+    let name = when.format(TITLE_FORMAT);
+    if (this.noteExists(file.parent, name)) name = when.format(TITLE_TAKEN_FORMAT);
+    if (this.noteExists(file.parent, name)) return; // leave it rather than guess
+    await this.app.fileManager.renameFile(file, file.parent.getParentPrefix() + name + '.md');
+  }
+
+  /**
    * Replace an unfilled `{{uid}}` in a note's frontmatter with a real uid.
    *
    * YAML reads `uid: {{uid}}` as a one-key object, `{ "{ uid }": null }`, so
@@ -190,24 +234,14 @@ module.exports = class NewNotePlugin extends Plugin {
    * purpose.
    */
   async fillUidPlaceholder(file) {
-    if (!(file instanceof TFile) || file.extension !== 'md') return;
-    if (this.filling.has(file.path) || this.inTemplateFolder(file.parent)) return;
     const value = this.app.metadataCache.getFileCache(file)?.frontmatter?.[UID_KEY];
     if (!isUidPlaceholder(value)) return;
-
-    this.filling.add(file.path);
-    try {
-      await this.app.vault.process(file, (text) => {
-        const block = /^---\r?\n[\s\S]*?\r?\n---(?=\r?\n|$)/.exec(text);
-        if (!block) return text;
-        const filled = block[0].replace(/\{\{\s*uid\s*\}\}/gi, () => this.newUid());
-        return filled + text.slice(block[0].length);
-      });
-    } catch (err) {
-      console.error('New Note: could not fill uid in', file.path, err);
-    } finally {
-      this.filling.delete(file.path);
-    }
+    await this.app.vault.process(file, (text) => {
+      const block = /^---\r?\n[\s\S]*?\r?\n---(?=\r?\n|$)/.exec(text);
+      if (!block) return text;
+      const filled = block[0].replace(/\{\{\s*uid\s*\}\}/gi, () => this.newUid());
+      return filled + text.slice(block[0].length);
+    });
   }
 
   // A uid no note in the vault already has. With 62^4 ≈ 14.8M values and a

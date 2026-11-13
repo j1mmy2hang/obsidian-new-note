@@ -42,18 +42,16 @@ Quick Capture template, where it becomes the captured text.
 
 ## iOS Quick Capture
 
-Quick Capture saves notes from outside the app, so no plugin runs at capture
+Quick Capture saves notes from outside the app, so no plugin can run at capture
 time. Point a Quick Capture Location at the note template: Quick Capture fills
-`{{date}}`, `{{time}}` and `{{content}}` itself and leaves `uid: {{uid}}` as it
-is. On desktop, New Note watches for notes with an unfilled `{{uid}}` in their
-frontmatter (at startup, and whenever a note changes or syncs in) and replaces
-it with a real uid. Notes in the Templates folder are skipped.
+`{{date}}`, `{{time}}` and `{{content}}` itself, leaves `uid: {{uid}}` as it is,
+and names the note "Untitled", "Untitled 1", and so on.
 
-- An unnamed note is titled `YYYYMMDDHHmm`. A second note made in the same
-  minute gets `YYYYMMDDHHmmss`.
-- Notes created with their own content (Excalidraw, daily notes) and notes made
-  inside the core Templates folder are left as they are.
-- If a template file is missing, a built-in one is used and a notice says so.
+New Note finishes such notes on every device, as soon as Obsidian runs: at
+startup, and whenever a note is created, changes or syncs in. It replaces an
+unfilled `{{uid}}` in the frontmatter with a real uid, and renames an
+"Untitled" note to the timestamp of its creation time (`YYYYMMDDHHmm`). Links
+to it are updated. Notes in the Templates folder are skipped.
 
 ## Install
 
