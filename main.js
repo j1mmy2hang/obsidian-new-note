@@ -119,6 +119,39 @@ module.exports = class NewNotePlugin extends Plugin {
   }
 
   /**
+   * Public API for other plugins: create a note through this pipeline without
+   * opening it, so they don't need their own creation logic.
+   *
+   *   app.plugins.getPlugin('new-note')?.createNote({
+   *     kind: 'todo',               // 'note' (default) or 'todo': which template
+   *     folder: 'today',            // path or TFolder; default: Obsidian's new-note folder
+   *     name: 'Buy milk',           // default: a timestamp title
+   *     properties: { 'do date': '2026-11-15' },  // set after the template
+   *   })  // → TFile
+   *
+   * The file is born from the template with the properties already in it, in
+   * one write, as with Cmd+N. A property the template has is replaced in
+   * place; a new one is added at the end of the frontmatter.
+   */
+  async createNote({ kind = 'note', folder, name = '', properties } = {}) {
+    const vault = this.app.vault;
+    let parent = folder;
+    if (typeof folder === 'string') {
+      const path = normalizePath(folder);
+      parent = path === '/' ? vault.getRoot() : vault.getFolderByPath(path) ?? (await vault.createFolder(path));
+    }
+    parent = parent || this.app.fileManager.getNewFileParent('');
+
+    // Everything is decided before the file exists and written once. A second
+    // write for the properties would leave a moment where the note exists
+    // without them, and other plugins react to that (Folder Drawer files an
+    // undated todo and dates it, and its write can replace ours).
+    const title = name || this.timestampTitle(parent);
+    const data = mergeProperties(await this.content(kind, title), properties);
+    return this.app.fileManager.createNewMarkdownFile(parent, title, data);
+  }
+
+  /**
    * Create a note exactly as Cmd+N does (same folder, same new tab, title
    * selected), but from `kind`'s template.
    *
@@ -228,19 +261,34 @@ module.exports = class NewNotePlugin extends Plugin {
    * Replace an unfilled `{{uid}}` in a note's frontmatter with a real uid.
    *
    * YAML reads `uid: {{uid}}` as a one-key object, `{ "{ uid }": null }`, so
-   * the metadata cache finds candidates without reading any file. The text is
-   * then checked and changed in one `vault.process`, touching only the
-   * frontmatter block. Templates are skipped: they hold the placeholder on
-   * purpose.
+   * the metadata cache finds candidates without reading any file. Templates
+   * are skipped: they hold the placeholder on purpose.
+   *
+   * The placeholder can reach a note in two written forms:
+   *   - as typed, `uid: {{uid}}` (Quick Capture copies the template text).
+   *     Then only that text is replaced, so nothing else in the note moves.
+   *   - re-serialized, `uid:\n  "{ uid }":` (a plugin that copies the
+   *     template's parsed frontmatter and writes it back with
+   *     processFrontMatter, e.g. Calendar Bases' 7-day view). There is no
+   *     `{{uid}}` text left to find, so the value is set through
+   *     processFrontMatter, the same way it was written.
    */
   async fillUidPlaceholder(file) {
     const value = this.app.metadataCache.getFileCache(file)?.frontmatter?.[UID_KEY];
     if (!isUidPlaceholder(value)) return;
+
+    let replacedText = false;
     await this.app.vault.process(file, (text) => {
       const block = /^---\r?\n[\s\S]*?\r?\n---(?=\r?\n|$)/.exec(text);
-      if (!block) return text;
+      if (!block || !/\{\{\s*uid\s*\}\}/i.test(block[0])) return text;
+      replacedText = true;
       const filled = block[0].replace(/\{\{\s*uid\s*\}\}/gi, () => this.newUid());
       return filled + text.slice(block[0].length);
+    });
+    if (replacedText) return;
+
+    await this.app.fileManager.processFrontMatter(file, (fm) => {
+      if (isUidPlaceholder(fm[UID_KEY])) fm[UID_KEY] = this.newUid();
     });
   }
 
@@ -292,6 +340,59 @@ module.exports = class NewNotePlugin extends Plugin {
     await this.saveData(this.settings);
   }
 };
+
+/**
+ * Set `properties` in a note's frontmatter text, keeping every other line as
+ * the template wrote it. A key the template has is replaced in place (with
+ * its list items, if any); a new key goes at the end. No frontmatter: one is
+ * added.
+ */
+function mergeProperties(text, properties) {
+  const entries = Object.entries(properties || {});
+  if (!entries.length) return text;
+  const match = /^---\r?\n([\s\S]*?)\r?\n?---(?:\r?\n|$)/.exec(text);
+  const lines = match && match[1] ? match[1].split(/\r?\n/) : [];
+  const body = match ? text.slice(match[0].length) : text;
+
+  for (const [key, value] of entries) {
+    const yaml = yamlLines(key, value);
+    const keyLine = new RegExp(`^(["']?)${escapeRegExp(key)}\\1\\s*:`);
+    const at = lines.findIndex((line) => keyLine.test(line));
+    if (at === -1) {
+      lines.push(...yaml);
+      continue;
+    }
+    let end = at + 1; // the key's own list items or nested lines
+    while (end < lines.length && /^(\s+\S|-(\s|$))/.test(lines[end])) end++;
+    lines.splice(at, end - at, ...yaml);
+  }
+  return `---\n${lines.join('\n')}\n---\n${body}`;
+}
+
+// One property as YAML lines, in the style the templates use.
+function yamlLines(key, value) {
+  const k = /^[\w][\w \-]*$/.test(key) ? key : JSON.stringify(key);
+  if (value == null || value === '') return [`${k}:`];
+  if (Array.isArray(value)) {
+    return value.length ? [`${k}:`, ...value.map((item) => `  - ${yamlScalar(item)}`)] : [`${k}: []`];
+  }
+  if (typeof value === 'object') return [`${k}: ${JSON.stringify(value)}`]; // JSON is valid YAML
+  return [`${k}: ${yamlScalar(value)}`];
+}
+
+// Plain when YAML reads it back as the same string, quoted otherwise.
+function yamlScalar(value) {
+  if (typeof value !== 'string') return JSON.stringify(value);
+  const plain =
+    /^[^\s\-?:,\[\]{}#&*!|>'"%@`]/.test(value) &&
+    !/:\s|\s#|[\r\n]|\s$/.test(value) &&
+    !/^(true|false|yes|no|on|off|null|~)$/i.test(value);
+  return plain ? value : JSON.stringify(value);
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 // `uid: {{uid}}` as YAML parses it, or the string if it was quoted.
 function isUidPlaceholder(value) {

@@ -53,6 +53,24 @@ unfilled `{{uid}}` in the frontmatter with a real uid, and renames an
 "Untitled" note to the timestamp of its creation time (`YYYYMMDDHHmm`). Links
 to it are updated. Notes in the Templates folder are skipped.
 
+## For other plugins
+
+Plugins that make notes can hand the job to New Note, so every note is born
+the same way:
+
+```js
+const file = await app.plugins.getPlugin('new-note')?.createNote({
+  kind: 'todo',                          // 'note' (default) or 'todo'
+  folder: 'today',                       // default: Obsidian's new-note folder
+  name: 'Buy milk',                      // default: a timestamp title
+  properties: { 'do date': '2026-11-15' },
+});
+```
+
+The properties are merged into the template's frontmatter (a key the template
+has is replaced in place, a new one is added at the end), and the file is
+created in one write, so no other plugin ever sees it half-made.
+
 ## Install
 
 The plugin is not in the community catalogue. Use
