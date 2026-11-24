@@ -51,7 +51,8 @@ New Note finishes such notes on every device, as soon as Obsidian runs: at
 startup, and whenever a note is created, changes or syncs in. It replaces an
 unfilled `{{uid}}` in the frontmatter with a real uid, and renames an
 "Untitled" note to the timestamp of its creation time (`YYYYMMDDHHmm`). Links
-to it are updated. Notes in the Templates folder are skipped.
+to it are updated. Notes in the folder that
+holds your templates are skipped.
 
 ## For other plugins
 

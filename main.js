@@ -183,12 +183,14 @@ module.exports = class NewNotePlugin extends Plugin {
     return !(ext !== 'md' && this.app.fileManager.fileParentCreatorByType?.hasOwnProperty(ext));
   }
 
-  // Notes made inside the core Templates folder are templates, not notes.
+  // Notes in a folder that holds one of our templates are templates, not
+  // notes. The template settings are the only record of where they live.
   inTemplateFolder(parent) {
-    const folder = this.app.internalPlugins.getPluginById('templates')?.instance?.options?.folder;
-    if (!folder || !parent || !parent.path) return false;
-    const root = folder.replace(/^\/+|\/+$/g, '');
-    return root !== '' && (parent.path === root || parent.path.startsWith(root + '/'));
+    if (!parent || !parent.path) return false;
+    return [this.settings.noteTemplate, this.settings.todoTemplate].some((path) => {
+      const root = path ? normalizePath(path).split('/').slice(0, -1).join('/') : '';
+      return root !== '' && (parent.path === root || parent.path.startsWith(root + '/'));
+    });
   }
 
   async content(kind, title) {
